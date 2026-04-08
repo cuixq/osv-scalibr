@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -105,9 +105,13 @@ func MergeParents(ctx context.Context, current maven.Parent, result *maven.Proje
 		if err := result.MergeProfiles("", maven.ActivationOS{}); err != nil {
 			return fmt.Errorf("failed to merge default profiles: %w", err)
 		}
+		// Interpolate the repositories in the project to get rid of the placeholders in URLs.
+		if err := proj.InterpolateRepositories(); err != nil {
+			return fmt.Errorf("failed to interpolate repositories: %w", err)
+		}
 		if opts.Client != nil && opts.AddRegistry && len(proj.Repositories) > 0 {
 			for _, repo := range proj.Repositories {
-				if err := opts.Client.AddRegistry(datasource.MavenRegistry{
+				if err := opts.Client.AddRegistry(ctx, datasource.MavenRegistry{
 					URL:              string(repo.URL),
 					ID:               string(repo.ID),
 					ReleasesEnabled:  repo.Releases.Enabled.Boolean(),

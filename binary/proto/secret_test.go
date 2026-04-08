@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,10 @@ import (
 	"github.com/google/go-cpy/cpy"
 	"github.com/google/osv-scalibr/binary/proto"
 	"github.com/google/osv-scalibr/inventory"
+	"github.com/google/osv-scalibr/inventory/location"
 	"github.com/google/osv-scalibr/veles"
+	"github.com/google/osv-scalibr/veles/secrets/gcpapikey"
+	"github.com/google/osv-scalibr/veles/secrets/gcpoauth2client"
 	"github.com/google/osv-scalibr/veles/secrets/gcpsak"
 	"google.golang.org/protobuf/testing/protocmp"
 
@@ -32,6 +35,13 @@ import (
 )
 
 var (
+	secretOpts = []cmp.Option{
+		protocmp.Transform(),
+		// Ignore the legacy location field.
+		// TODO(b/400910349): Remove once the field is no longer set.
+		protocmp.IgnoreFields(&spb.Secret{}, "locations"),
+	}
+
 	secretAt1 = time.Now()
 
 	secretGCPSAKStruct1 = &inventory.Secret{
@@ -40,7 +50,7 @@ var (
 			ServiceAccount: "some-service-account@gserviceaccount.iam.google.com",
 			Signature:      make([]byte, 256),
 		},
-		Location: "/foo/bar/baz.json",
+		Location: location.FromPath("/foo/bar/baz.json"),
 		Validation: inventory.SecretValidationResult{
 			At:     secretAt1,
 			Status: veles.ValidationInvalid,
@@ -60,13 +70,52 @@ var (
 			Status:      spb.SecretStatus_INVALID,
 			LastUpdated: timestamppb.New(secretAt1),
 		},
-		Locations: []*spb.Location{
-			&spb.Location{
-				Location: &spb.Location_Filepath{
-					Filepath: &spb.Filepath{
-						Path: "/foo/bar/baz.json",
-					},
+		Location: &spb.Location{
+			File: &spb.File{
+				Path: "/foo/bar/baz.json",
+			},
+		},
+	}
+	secretGCPAPIKeyStruct = &inventory.Secret{
+		Secret: gcpapikey.GCPAPIKey{
+			Key: "AIzatestestestestestestestestestesttest",
+		},
+		Location: location.FromPath("/foo/bar/baz.json"),
+	}
+	secretGCPAPIKeyProto = &spb.Secret{
+		Secret: &spb.SecretData{
+			Secret: &spb.SecretData_GcpApiKey{
+				GcpApiKey: &spb.SecretData_GCPAPIKey{
+					Key: "AIzatestestestestestestestestestesttest",
 				},
+			},
+		},
+		Location: &spb.Location{
+			File: &spb.File{
+				Path: "/foo/bar/baz.json",
+			},
+		},
+	}
+
+	secretGCPOAuth2ClientCredentialsStruct = &inventory.Secret{
+		Secret: gcpoauth2client.Credentials{
+			ID:     "12345678901-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com",
+			Secret: "GOCSPX-1mVwFTjGIXgs2BC2uHzksQi0HAK",
+		},
+		Location: location.FromPath("/foo/bar/baz.json"),
+	}
+	secretGCPOAuth2ClientCredentialsProto = &spb.Secret{
+		Secret: &spb.SecretData{
+			Secret: &spb.SecretData_GcpOauth2ClientCredentials{
+				GcpOauth2ClientCredentials: &spb.SecretData_GCPOAuth2ClientCredentials{
+					Id:     "12345678901-abcdefghijklmnopqrstuvwxyz.apps.googleusercontent.com",
+					Secret: "GOCSPX-1mVwFTjGIXgs2BC2uHzksQi0HAK",
+				},
+			},
+		},
+		Location: &spb.Location{
+			File: &spb.File{
+				Path: "/foo/bar/baz.json",
 			},
 		},
 	}
@@ -96,7 +145,7 @@ func TestSecretToProto(t *testing.T) {
 			want: secretGCPSAKProto1,
 		},
 		{
-			desc: "empty validation",
+			desc: "empty_validation",
 			s: func(s *inventory.Secret) *inventory.Secret {
 				s = copier.Copy(s).(*inventory.Secret)
 				s.Validation = inventory.SecretValidationResult{}
@@ -108,6 +157,16 @@ func TestSecretToProto(t *testing.T) {
 				return s
 			}(secretGCPSAKProto1),
 		},
+		{
+			desc: "success_GCP_API_key",
+			s:    secretGCPAPIKeyStruct,
+			want: secretGCPAPIKeyProto,
+		},
+		{
+			desc: "GCP_OAuth2_client_credentials",
+			s:    secretGCPOAuth2ClientCredentialsStruct,
+			want: secretGCPOAuth2ClientCredentialsProto,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -116,7 +175,7 @@ func TestSecretToProto(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("SecretToProto(%v) returned error %v, want error %v", tc.s, err, tc.wantErr)
 			}
-			if diff := cmp.Diff(tc.want, got, protocmp.Transform()); diff != "" {
+			if diff := cmp.Diff(tc.want, got, secretOpts...); diff != "" {
 				t.Fatalf("SecretToProto(%v) returned diff (-want +got):\n%s", tc.s, diff)
 			}
 
@@ -130,7 +189,7 @@ func TestSecretToProto(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SecretToStruct(%v) returned error %v, want nil", got, err)
 			}
-			if diff := cmp.Diff(tc.s, gotPB, protocmp.Transform()); diff != "" {
+			if diff := cmp.Diff(tc.s, gotPB, secretOpts...); diff != "" {
 				t.Fatalf("SecretToStruct(%v) returned diff (-want +got):\n%s", got, diff)
 			}
 		})
@@ -161,7 +220,7 @@ func TestSecretToStruct(t *testing.T) {
 			want: secretGCPSAKStruct1,
 		},
 		{
-			desc: "empty validation",
+			desc: "empty_validation",
 			s: func(s *spb.Secret) *spb.Secret {
 				s = copier.Copy(s).(*spb.Secret)
 				s.Status = nil
@@ -173,6 +232,16 @@ func TestSecretToStruct(t *testing.T) {
 				return s
 			}(secretGCPSAKStruct1),
 		},
+		{
+			desc: "success_GCP_API_key",
+			s:    secretGCPAPIKeyProto,
+			want: secretGCPAPIKeyStruct,
+		},
+		{
+			desc: "GCP_OAuth2_client_credentials",
+			s:    secretGCPOAuth2ClientCredentialsProto,
+			want: secretGCPOAuth2ClientCredentialsStruct,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -181,7 +250,7 @@ func TestSecretToStruct(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("SecretToStruct(%v) returned error %v, want error %v", tc.s, err, tc.wantErr)
 			}
-			if diff := cmp.Diff(tc.want, got, protocmp.Transform()); diff != "" {
+			if diff := cmp.Diff(tc.want, got, secretOpts...); diff != "" {
 				t.Fatalf("SecretToStruct(%v) returned diff (-want +got):\n%s", tc.s, diff)
 			}
 
@@ -195,7 +264,7 @@ func TestSecretToStruct(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SecretToProto(%v) returned error %v, want nil", got, err)
 			}
-			if diff := cmp.Diff(tc.s, gotPB, protocmp.Transform()); diff != "" {
+			if diff := cmp.Diff(tc.s, gotPB, secretOpts...); diff != "" {
 				t.Fatalf("SecretToProto(%v) returned diff (-want +got):\n%s", got, diff)
 			}
 		})

@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 //go:build windows
 
+// Package dockersocket implements a detector for Docker socket exposure vulnerabilities.
 package dockersocket
 
 import (
@@ -25,6 +26,8 @@ import (
 	"github.com/google/osv-scalibr/inventory"
 	"github.com/google/osv-scalibr/packageindex"
 	"github.com/google/osv-scalibr/plugin"
+
+	cpb "github.com/google/osv-scalibr/binary/proto/config_go_proto"
 )
 
 const (
@@ -36,8 +39,8 @@ const (
 type Detector struct{}
 
 // New returns a detector.
-func New() detector.Detector {
-	return &Detector{}
+func New(_ *cpb.PluginConfig) (detector.Detector, error) {
+	return &Detector{}, nil
 }
 
 // Name of the detector.

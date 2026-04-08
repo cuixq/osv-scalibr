@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,13 +39,15 @@ const (
 	TypeCocoapods = "cocoapods"
 	// TypeCargo is a pkg:cargo purl.
 	TypeCargo = "cargo"
+	// TypeJulia is a pkg:julia purl.
+	TypeJulia = "julia"
 	// TypeComposer is a pkg:composer purl.
 	TypeComposer = "composer"
 	// TypeConan is a pkg:conan purl.
 	TypeConan = "conan"
 	// TypeConda is a pkg:conda purl.
 	TypeConda = "conda"
-	// COS is the pkg:cos purl
+	// TypeCOS is the pkg:cos purl
 	TypeCOS = "cos"
 	// TypeCran is a pkg:cran purl.
 	TypeCran = "cran"
@@ -53,6 +55,8 @@ const (
 	TypeDebian = "deb"
 	// TypeDocker is a pkg:docker purl.
 	TypeDocker = "docker"
+	// TypeK8s is a pkg:k8s purl.
+	TypeK8s = "k8s"
 	// TypeFlatpak is a pkg:flatpak purl.
 	TypeFlatpak = "flatpak"
 	// TypeGem is a pkg:gem purl.
@@ -65,7 +69,7 @@ const (
 	TypeGolang = "golang"
 	// TypeHackage is a pkg:hackage purl.
 	TypeHackage = "hackage"
-	// Type Haskell is a pkg:haskell purl.
+	// TypeHaskell is a pkg:haskell purl.
 	TypeHaskell = "haskell"
 	// TypeMacApps is a pkg:macapps purl.
 	TypeMacApps = "macapps"
@@ -77,12 +81,16 @@ const (
 	TypeNix = "nix"
 	// TypeNPM is a pkg:npm purl.
 	TypeNPM = "npm"
+	// TypeJSR is a pkg:jsr purl.
+	TypeJSR = "jsr"
 	// TypePacman is a pkg:pacman purl.
 	TypePacman = "pacman"
 	// TypeNuget is a pkg:nuget purl.
 	TypeNuget = "nuget"
 	// TypeOCI is a pkg:oci purl
 	TypeOCI = "oci"
+	// TypeOpam is a pkg:opam purl.
+	TypeOpam = "opam"
 	// TypeOpkg is a pkg:opkg purl.
 	TypeOpkg = "opkg"
 	// TypePub is a pkg:pub purl.
@@ -103,12 +111,22 @@ const (
 	TypeWordpress = "wordpress"
 	// TypeAsdf is pkg:asdf purl
 	TypeAsdf = "asdf"
-	// Macports is pkg:macports purl
+	// TypeMise is pkg:mise purl
+	TypeMise = "mise"
+	// TypeMacports is pkg:macports purl
 	TypeMacports = "macports"
 	// TypeWinget is pkg:winget purl
 	TypeWinget = "winget"
 	// TypeNim is pkg:nim purl
 	TypeNim = "nim"
+	// TypeLua is pkg:lua purl
+	TypeLua = "lua"
+	// TypeChocolatey is pkg:chocolatey purl
+	TypeChocolatey = "chocolatey"
+	// TypeSpack is pkg:spack purl
+	TypeSpack = "spack"
+	// TypeCPAN is pkg:cpan purl
+	TypeCPAN = "cpan"
 )
 
 // PackageURL is the struct representation of the parts that make a package url.
@@ -175,46 +193,52 @@ func FromString(purl string) (PackageURL, error) {
 
 func validType(t string) bool {
 	types := map[string]bool{
-		TypeAlpm:      true,
-		TypeApk:       true,
-		TypeBitbucket: true,
-		TypeBrew:      true,
-		TypeCargo:     true,
-		TypeCocoapods: true,
-		TypeComposer:  true,
-		TypeConan:     true,
-		TypeConda:     true,
-		TypeCOS:       true,
-		TypeCran:      true,
-		TypeDebian:    true,
-		TypePacman:    true,
-		TypeDocker:    true,
-		TypeFlatpak:   true,
-		TypeGem:       true,
-		TypeGeneric:   true,
-		TypeGithub:    true,
-		TypeGolang:    true,
-		TypeHackage:   true,
-		TypeHaskell:   true,
-		TypeNim:       true,
-		TypeHex:       true,
-		TypeMacApps:   true,
-		TypeMaven:     true,
-		TypeNix:       true,
-		TypeNPM:       true,
-		TypeNuget:     true,
-		TypeOCI:       true,
-		TypeOpkg:      true,
-		TypePub:       true,
-		TypePortage:   true,
-		TypePyPi:      true,
-		TypeRPM:       true,
-		TypeSwift:     true,
-		TypeGooget:    true,
-		TypeWordpress: true,
-		TypeAsdf:      true,
-		TypeMacports:  true,
-		TypeWinget:    true,
+		TypeAlpm:       true,
+		TypeApk:        true,
+		TypeBitbucket:  true,
+		TypeBrew:       true,
+		TypeCargo:      true,
+		TypeCocoapods:  true,
+		TypeComposer:   true,
+		TypeConan:      true,
+		TypeConda:      true,
+		TypeCOS:        true,
+		TypeCran:       true,
+		TypeDebian:     true,
+		TypePacman:     true,
+		TypeDocker:     true,
+		TypeFlatpak:    true,
+		TypeGem:        true,
+		TypeGeneric:    true,
+		TypeGithub:     true,
+		TypeGolang:     true,
+		TypeHackage:    true,
+		TypeHaskell:    true,
+		TypeNim:        true,
+		TypeLua:        true,
+		TypeHex:        true,
+		TypeMacApps:    true,
+		TypeMaven:      true,
+		TypeNix:        true,
+		TypeNPM:        true,
+		TypeJSR:        true,
+		TypeNuget:      true,
+		TypeOCI:        true,
+		TypeOpam:       true,
+		TypeOpkg:       true,
+		TypePub:        true,
+		TypePortage:    true,
+		TypePyPi:       true,
+		TypeRPM:        true,
+		TypeSwift:      true,
+		TypeGooget:     true,
+		TypeWordpress:  true,
+		TypeAsdf:       true,
+		TypeMacports:   true,
+		TypeWinget:     true,
+		TypeChocolatey: true,
+		TypeMise:       true,
+		TypeCPAN:       true,
 	}
 
 	// purl type is case-insensitive, canonical form is lower-case

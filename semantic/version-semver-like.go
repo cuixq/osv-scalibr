@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,39 +17,36 @@ package semantic
 import (
 	"fmt"
 	"math/big"
-	"regexp"
 	"strings"
-)
-
-var (
-	semverIsDigit = regexp.MustCompile(`\d`)
 )
 
 // semverLikeVersion is a version that is _like_ a version as defined by the
 // Semantic Version specification, except with potentially unlimited numeric
 // components and a leading "v"
 type semverLikeVersion struct {
-	LeadingV   bool
-	Components components
-	Build      string
-	Original   string
+	leadingV   bool
+	components components
+	build      string
+	original   string
 }
 
 func (v *semverLikeVersion) fetchComponentsAndBuild(maxComponents int) (components, string) {
-	if maxComponents == -1 || len(v.Components) <= maxComponents {
-		return v.Components, v.Build
+	if maxComponents == -1 || len(v.components) <= maxComponents {
+		return v.components, v.build
 	}
 
-	comps := v.Components[:maxComponents]
-	extra := v.Components[maxComponents:]
+	comps := v.components[:maxComponents]
+	extra := v.components[maxComponents:]
 
-	build := v.Build
+	var build strings.Builder
+
+	build.WriteString(v.build)
 
 	for _, c := range extra {
-		build += fmt.Sprintf(".%d", c)
+		fmt.Fprintf(&build, ".%d", c)
 	}
 
-	return comps, build
+	return comps, build.String()
 }
 
 func parseSemverLikeVersion(line string, maxComponents int) semverLikeVersion {
@@ -58,10 +55,10 @@ func parseSemverLikeVersion(line string, maxComponents int) semverLikeVersion {
 	comps, build := v.fetchComponentsAndBuild(maxComponents)
 
 	return semverLikeVersion{
-		LeadingV:   v.LeadingV,
-		Components: comps,
-		Build:      build,
-		Original:   v.Original,
+		leadingV:   v.leadingV,
+		components: comps,
+		build:      build,
+		original:   v.original,
 	}
 }
 
@@ -83,7 +80,7 @@ func parseSemverLike(line string) semverLikeVersion {
 		}
 
 		// this is part of a component version
-		if semverIsDigit.MatchString(string(c)) {
+		if isASCIIDigit(c) {
 			currentCom += string(c)
 
 			continue
@@ -127,9 +124,9 @@ func parseSemverLike(line string) semverLikeVersion {
 	}
 
 	return semverLikeVersion{
-		LeadingV:   leadingV,
-		Components: comps,
-		Build:      currentCom,
-		Original:   originStr,
+		leadingV:   leadingV,
+		components: comps,
+		build:      currentCom,
+		original:   originStr,
 	}
 }

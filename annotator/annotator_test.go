@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@ import (
 	"github.com/google/osv-scalibr/inventory/vex"
 	"github.com/google/osv-scalibr/plugin"
 	"google.golang.org/protobuf/proto"
+
+	cpb "github.com/google/osv-scalibr/binary/proto/config_go_proto"
 )
 
 type succeedingAnnotator struct{}
@@ -52,7 +54,7 @@ func (failingAnnotator) Annotate(ctx context.Context, input *annotator.ScanInput
 func TestRun(t *testing.T) {
 	inv := &inventory.Inventory{
 		Packages: []*extractor.Package{
-			{Name: "package1", Version: "1.0", Locations: []string{"tmp/package.json"}},
+			{Name: "package1", Version: "1.0", Location: extractor.LocationFromPath("tmp/package.json")},
 		},
 	}
 
@@ -60,6 +62,11 @@ func TestRun(t *testing.T) {
 		cpy.Func(proto.Clone),
 		cpy.IgnoreAllUnexported(),
 	)
+
+	anno, err := cachedir.New(&cpb.PluginConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		desc    string
@@ -77,7 +84,7 @@ func TestRun(t *testing.T) {
 		{
 			desc: "annotator_modifies_inventory",
 			cfg: &annotator.Config{
-				Annotators: []annotator.Annotator{cachedir.New()},
+				Annotators: []annotator.Annotator{anno},
 			},
 			inv: inv,
 			want: []*plugin.Status{
@@ -86,9 +93,9 @@ func TestRun(t *testing.T) {
 			wantInv: &inventory.Inventory{
 				Packages: []*extractor.Package{
 					{
-						Name:      "package1",
-						Version:   "1.0",
-						Locations: []string{"tmp/package.json"},
+						Name:     "package1",
+						Version:  "1.0",
+						Location: extractor.LocationFromPath("tmp/package.json"),
 						ExploitabilitySignals: []*vex.PackageExploitabilitySignal{&vex.PackageExploitabilitySignal{
 							Plugin:          cachedir.Name,
 							Justification:   vex.ComponentNotPresent,
@@ -123,7 +130,7 @@ func TestRun(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			// Deep copy the inventory to avoid modifying the original inventory that is used in other tests.
 			inv := copier.Copy(tc.inv).(*inventory.Inventory)
-			got, err := annotator.Run(context.Background(), tc.cfg, inv)
+			got, err := annotator.Run(t.Context(), tc.cfg, inv)
 			if !cmp.Equal(err, tc.wantErr, cmpopts.EquateErrors()) {
 				t.Errorf("Run(%+v) error: got %v, want %v\n", tc.cfg, err, tc.wantErr)
 			}

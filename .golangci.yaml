@@ -44,6 +44,7 @@ linters:
     - wrapcheck        #
     - wsl              #
     - wsl_v5           #
+    - gochecknoinits   # We are now using inits for metadata
   settings:
     forbidigo:
       forbid:
@@ -107,9 +108,9 @@ linters:
     staticcheck:
       checks:
         - all
+        - -SA5011 # seems prone to false positives in tests
         - -QF1001 # apply De Morgan's law
         - -QF1003 # use tagged switch on prefix
-        - -QF1008 # remove embedded field from selector
   exclusions:
     generated: lax
     presets:

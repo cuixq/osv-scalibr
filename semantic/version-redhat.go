@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,24 +18,26 @@ import (
 	"strings"
 )
 
-type redHatVersion struct {
+// RedHatVersion is the representation of a version of a package that is held
+// in the Red Hat ecosystem.
+//
+// See https://docs.fedoraproject.org/en-US/packaging-guidelines/Versioning/
+type RedHatVersion struct {
 	epoch   string
 	version string
 	release string
 }
 
-// isASCIIDigit returns true if the given rune is an ASCII digit.
-//
-// Unicode digits are not considered ASCII digits by this function.
-func isASCIIDigit(c rune) bool {
-	return c >= 48 && c <= 57
-}
+var _ Version = RedHatVersion{}
 
-// isASCIILetter returns true if the given rune is an ASCII letter.
-//
-// Unicode letters are not considered ASCII letters by this function.
-func isASCIILetter(c rune) bool {
-	return (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+// isOnlyDigits returns true if the given string contains only digits
+func isOnlyDigits(str string) bool {
+	for _, c := range str {
+		if !isASCIIDigit(c) {
+			return false
+		}
+	}
+	return true
 }
 
 // shouldBeTrimmed checks if the given rune should be trimmed when parsing redHatVersion components
@@ -126,14 +128,14 @@ func compareRedHatComponents(a, b string) int {
 			isExpectedRunType = isASCIILetter
 		}
 
-		var as, bs string
+		var asb, bsb strings.Builder
 
 		for _, c := range a[ai:] {
 			if !isExpectedRunType(c) {
 				break
 			}
 
-			as += string(c)
+			asb.WriteRune(c)
 			ai++
 		}
 
@@ -142,18 +144,21 @@ func compareRedHatComponents(a, b string) int {
 				break
 			}
 
-			bs += string(c)
+			bsb.WriteRune(c)
 			bi++
 		}
 
 		// 8. If the segment from `b` had 0 length, return 1 if the segment from `a` was numeric, or -1 if it was alphabetic. The logical result of this is that if `a` begins with numbers and `b` does not, `a` is newer (return 1). If `a` begins with letters and `b` does not, then `a` is older (return -1). If the leading character(s) from `a` and `b` were both numbers or both letters, continue on.
-		if bs == "" {
+		if bsb.Len() == 0 {
 			if isDigit {
 				return +1
 			}
 
 			return -1
 		}
+
+		as := asb.String()
+		bs := bsb.String()
 
 		// 9. If the leading segments were both numeric, discard any leading zeros and whichever one is longer wins. If `a` is longer than `b` (without leading zeroes), return 1, and vice versa. If they’re of the same length, continue on.
 		if isDigit {
@@ -188,7 +193,7 @@ func compareRedHatComponents(a, b string) int {
 	return 0
 }
 
-func (v redHatVersion) compare(w redHatVersion) int {
+func (v RedHatVersion) compare(w RedHatVersion) int {
 	if diff := compareRedHatComponents(v.epoch, w.epoch); diff != 0 {
 		return diff
 	}
@@ -202,36 +207,39 @@ func (v redHatVersion) compare(w redHatVersion) int {
 	return 0
 }
 
-func (v redHatVersion) CompareStr(str string) (int, error) {
-	return v.compare(parseRedHatVersion(str)), nil
+// Compare compares the given version to the receiver.
+func (v RedHatVersion) Compare(w Version) (int, error) {
+	if w, ok := w.(RedHatVersion); ok {
+		return v.compare(w), nil
+	}
+	return 0, ErrNotSameEcosystem
 }
 
-// parseRedHatVersion parses a Red Hat version into a redHatVersion struct.
+// CompareStr compares the given string to the receiver.
+func (v RedHatVersion) CompareStr(str string) (int, error) {
+	return v.compare(ParseRedHatVersion(str)), nil
+}
+
+// ParseRedHatVersion parses a Red Hat version into a RedHatVersion struct.
 //
 // A Red Hat version contains the following components:
-// - name (of the package), represented as "n"
 // - epoch, represented as "e"
 // - version, represented as "v"
 // - release, represented as "r"
-// - architecture, represented as "a"
 //
-// When all components are present, the version is represented as "n-e:v-r.a",
+// When all components are present, the version is represented as "e:v-r",
 // though only the version is actually required.
-func parseRedHatVersion(str string) redHatVersion {
-	bf, af, hasColon := strings.Cut(str, ":")
+func ParseRedHatVersion(str string) RedHatVersion {
+	epoch, vr, hasColon := strings.Cut(str, ":")
 
-	if !hasColon {
-		af, bf = bf, af
+	// if there's not a colon, or the "epoch" value has characters other than digits,
+	// then the string does not have an epoch value
+	if !hasColon || !isOnlyDigits(epoch) {
+		vr = str
+		epoch = ""
 	}
 
-	// (note, we don't actually use the name)
-	name, epoch, hasName := strings.Cut(bf, "-")
-
-	if !hasName {
-		epoch = name
-	}
-
-	version, release, hasRelease := strings.Cut(af, "-")
+	version, release, hasRelease := strings.Cut(vr, "-")
 
 	if hasRelease {
 		release = "-" + release
@@ -241,5 +249,5 @@ func parseRedHatVersion(str string) redHatVersion {
 		epoch = "0"
 	}
 
-	return redHatVersion{epoch, version, release}
+	return RedHatVersion{epoch, version, release}
 }

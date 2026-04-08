@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gobwas/glob"
@@ -33,9 +35,12 @@ import (
 	"github.com/google/osv-scalibr/detector"
 	"github.com/google/osv-scalibr/detector/detectorrunner"
 	"github.com/google/osv-scalibr/enricher"
+	ce "github.com/google/osv-scalibr/enricher/secrets/convert"
 	"github.com/google/osv-scalibr/extractor"
 	"github.com/google/osv-scalibr/extractor/filesystem"
+	cf "github.com/google/osv-scalibr/extractor/filesystem/secrets/convert"
 	"github.com/google/osv-scalibr/extractor/standalone"
+	scalibrfs "github.com/google/osv-scalibr/fs"
 	"github.com/google/osv-scalibr/inventory"
 	"github.com/google/osv-scalibr/log"
 	"github.com/google/osv-scalibr/packageindex"
@@ -46,7 +51,7 @@ import (
 	"github.com/google/osv-scalibr/version"
 	"go.uber.org/multierr"
 
-	scalibrfs "github.com/google/osv-scalibr/fs"
+	cpb "github.com/google/osv-scalibr/binary/proto/config_go_proto"
 )
 
 var (
@@ -107,6 +112,14 @@ type ScanConfig struct {
 	PrintDurationAnalysis bool
 	// Optional: If true, fail the scan if any permission errors are encountered.
 	ErrorOnFSErrors bool
+	// Optional: If set, this function is called for each file to check if there is a specific
+	// extractor for this file. If it returns an extractor, only that extractor is used for the file.
+	ExtractorOverride func(filesystem.FileAPI) []filesystem.Extractor
+	// Optional: If set, SCALIBR returns an error when a plugin's required plugin
+	// isn't configured instead of enabling required plugins automatically.
+	ExplicitPlugins bool
+	// Optional: Configuration to apply to auto-enabled required plugins.
+	RequiredPluginConfig *cpb.PluginConfig
 }
 
 // EnableRequiredPlugins adds those plugins to the config that are required by enabled
@@ -135,7 +148,13 @@ func (cfg *ScanConfig) EnableRequiredPlugins() error {
 		if _, enabled := enabledPlugins[p]; enabled {
 			continue
 		}
-		requiredPlugin, err := pl.FromName(p)
+		if cfg.ExplicitPlugins {
+			// Plugins need to be explicitly enabled,
+			// so we log an error instead of auto-enabling them.
+			return fmt.Errorf("required plugin %q not enabled", p)
+		}
+
+		requiredPlugin, err := pl.FromName(p, cfg.RequiredPluginConfig)
 		// TODO: b/416106602 - Implement transitive enablement for required enrichers.
 		if err != nil {
 			return fmt.Errorf("required plugin %q not present in any list.go: %w", p, err)
@@ -190,10 +209,17 @@ func (Scanner) Scan(ctx context.Context, config *ScanConfig) (sr *ScanResult) {
 		sro.EndTime = time.Now()
 		return newScanResult(sro)
 	}
+	extractors := pl.FilesystemExtractors(config.Plugins)
+	extractors, err := cf.SetupVelesExtractors(extractors)
+	if err != nil {
+		sro.Err = multierr.Append(sro.Err, err)
+		sro.EndTime = time.Now()
+		return newScanResult(sro)
+	}
 	extractorConfig := &filesystem.Config{
 		Stats:                 config.Stats,
 		ReadSymlinks:          config.ReadSymlinks,
-		Extractors:            pl.FilesystemExtractors(config.Plugins),
+		Extractors:            extractors,
 		PathsToExtract:        config.PathsToExtract,
 		IgnoreSubDirs:         config.IgnoreSubDirs,
 		DirsToSkip:            config.DirsToSkip,
@@ -203,9 +229,9 @@ func (Scanner) Scan(ctx context.Context, config *ScanConfig) (sr *ScanResult) {
 		UseGitignore:          config.UseGitignore,
 		ScanRoots:             config.ScanRoots,
 		MaxInodes:             config.MaxInodes,
-		StoreAbsolutePath:     config.StoreAbsolutePath,
 		PrintDurationAnalysis: config.PrintDurationAnalysis,
 		ErrorOnFSErrors:       config.ErrorOnFSErrors,
+		ExtractorOverride:     config.ExtractorOverride,
 	}
 	inv, extractorStatus, err := filesystem.Run(ctx, extractorConfig)
 	if err != nil {
@@ -215,6 +241,19 @@ func (Scanner) Scan(ctx context.Context, config *ScanConfig) (sr *ScanResult) {
 	}
 
 	sro.Inventory = inv
+	// Defer cleanup of all temporary files and directories created during extraction.
+	// This function iterates over all EmbeddedFS entries in the inventory and
+	// removes their associated TempPaths.
+	// Any failures during removal are logged but do not interrupt execution.
+	defer func() {
+		for _, embeddedFS := range sro.Inventory.EmbeddedFSs {
+			for _, tmpPath := range embeddedFS.TempPaths {
+				if err := os.RemoveAll(tmpPath); err != nil {
+					log.Infof("Failed to remove %s", tmpPath)
+				}
+			}
+		}
+	}()
 	sro.PluginStatus = append(sro.PluginStatus, extractorStatus...)
 	sysroot := config.ScanRoots[0]
 	standaloneCfg := &standalone.Config{
@@ -258,8 +297,15 @@ func (Scanner) Scan(ctx context.Context, config *ScanConfig) (sr *ScanResult) {
 		sro.Err = multierr.Append(sro.Err, err)
 	}
 
+	enrichers := pl.Enrichers(config.Plugins)
+	enrichers, err = ce.SetupVelesEnrichers(enrichers)
+	if err != nil {
+		sro.Err = multierr.Append(sro.Err, err)
+		sro.EndTime = time.Now()
+		return newScanResult(sro)
+	}
 	enricherCfg := &enricher.Config{
-		Enrichers: pl.Enrichers(config.Plugins),
+		Enrichers: enrichers,
 		ScanRoot: &scalibrfs.ScanRoot{
 			FS:   sysroot.FS,
 			Path: sysroot.Path,
@@ -269,6 +315,13 @@ func (Scanner) Scan(ctx context.Context, config *ScanConfig) (sr *ScanResult) {
 	sro.PluginStatus = append(sro.PluginStatus, enricherStatus...)
 	if err != nil {
 		sro.Err = multierr.Append(sro.Err, err)
+	}
+
+	if config.StoreAbsolutePath {
+		err := sro.Inventory.ExpandPathsToAbsolute()
+		if err != nil {
+			sro.Err = multierr.Append(sro.Err, err)
+		}
 	}
 
 	sro.EndTime = time.Now()
@@ -293,8 +346,9 @@ func (s Scanner) ScanContainer(ctx context.Context, img image.Image, config *Sca
 	}
 
 	storeAbsPath := config.StoreAbsolutePath
-	// Don't try and store absolute path because on windows it will turn unix paths into
-	// Windows paths.
+	// We want to store absolute paths in the inventory,
+	// but paths should be relative to root of the imagefs
+	// (always '/' as we only support linux containers)
 	config.StoreAbsolutePath = false
 
 	// Suppress running enrichers until after layer details are populated.
@@ -316,10 +370,15 @@ func (s Scanner) ScanContainer(ctx context.Context, img image.Image, config *Sca
 	}
 
 	scanResult := s.Scan(ctx, config)
+	extractors := pl.FilesystemExtractors(config.Plugins)
+	extractors, err = cf.SetupVelesExtractors(extractors)
+	if err != nil {
+		return scanResult, err
+	}
 	extractorConfig := &filesystem.Config{
 		Stats:                 config.Stats,
 		ReadSymlinks:          config.ReadSymlinks,
-		Extractors:            pl.FilesystemExtractors(config.Plugins),
+		Extractors:            extractors,
 		PathsToExtract:        config.PathsToExtract,
 		IgnoreSubDirs:         config.IgnoreSubDirs,
 		DirsToSkip:            config.DirsToSkip,
@@ -329,24 +388,21 @@ func (s Scanner) ScanContainer(ctx context.Context, img image.Image, config *Sca
 		UseGitignore:          config.UseGitignore,
 		ScanRoots:             config.ScanRoots,
 		MaxInodes:             config.MaxInodes,
-		StoreAbsolutePath:     config.StoreAbsolutePath,
 		PrintDurationAnalysis: config.PrintDurationAnalysis,
+		ErrorOnFSErrors:       config.ErrorOnFSErrors,
+		ExtractorOverride:     config.ExtractorOverride,
 	}
 
 	// Populate the LayerDetails field of the inventory by tracing the layer origins.
-	trace.PopulateLayerDetails(ctx, scanResult.Inventory, chainLayers, pl.FilesystemExtractors(config.Plugins), extractorConfig)
-
-	// Since we skipped storing absolute path in the main Scan function.
-	// Actually convert it to absolute path here.
-	if storeAbsPath {
-		for _, pkg := range scanResult.Inventory.Packages {
-			for i := range pkg.Locations {
-				pkg.Locations[i] = "/" + pkg.Locations[i]
-			}
-		}
-	}
+	trace.PopulateLayerDetails(ctx, &scanResult.Inventory, chainLayers, pl.FilesystemExtractors(config.Plugins), extractorConfig)
 
 	// Run enrichers with the updated inventory.
+	enrichers, err = ce.SetupVelesEnrichers(enrichers)
+	if err != nil {
+		scanResult.Status.Status = plugin.ScanStatusFailed
+		scanResult.Status.FailureReason = err.Error()
+		return scanResult, nil //nolint:nilerr // Errors are returned in the scanResult.
+	}
 	enricherCfg := &enricher.Config{
 		Enrichers: enrichers,
 		ScanRoot: &scalibrfs.ScanRoot{
@@ -358,6 +414,21 @@ func (s Scanner) ScanContainer(ctx context.Context, img image.Image, config *Sca
 	if err != nil {
 		scanResult.Status.Status = plugin.ScanStatusFailed
 		scanResult.Status.FailureReason = err.Error()
+	}
+
+	// Since we skipped storing absolute path in the main Scan function.
+	// Actually convert it to absolute path here.
+	if storeAbsPath {
+		for _, pkg := range scanResult.Inventory.Packages {
+			if pkg.Location.Descriptor != nil && pkg.Location.Descriptor.File != nil {
+				pkg.Location.Descriptor.File.Path = "/" + pkg.Location.Descriptor.File.Path
+			}
+			for _, r := range pkg.Location.Related {
+				if r.File != nil {
+					r.File.Path = "/" + r.File.Path
+				}
+			}
+		}
 	}
 
 	// Keep the img variable alive till the end incase cleanup is not called on the parent.
@@ -381,6 +452,14 @@ func newScanResult(o *newScanResultOptions) *ScanResult {
 		status.FailureReason = o.Err.Error()
 	} else {
 		status.Status = plugin.ScanStatusSucceeded
+		// If any plugin failed, set the overall scan status to partially succeeded.
+		for _, pluginStatus := range o.PluginStatus {
+			if pluginStatus.Status.Status == plugin.ScanStatusFailed {
+				status.Status = plugin.ScanStatusPartiallySucceeded
+				status.FailureReason = "not all plugins succeeded, see the plugin statuses"
+				break
+			}
+		}
 	}
 	r := &ScanResult{
 		StartTime:    o.StartTime,
@@ -423,9 +502,7 @@ func CmpPackages(a, b *extractor.Package) int {
 		return res
 	}
 
-	aloc := fmt.Sprintf("%v", a.Locations)
-	bloc := fmt.Sprintf("%v", b.Locations)
-	return cmp.Compare(aloc, bloc)
+	return cmpLocation(a.Location, b.Location)
 }
 
 func cmpStatus(a, b *plugin.Status) int {
@@ -433,7 +510,7 @@ func cmpStatus(a, b *plugin.Status) int {
 }
 
 func cmpPackageVulns(a, b *inventory.PackageVuln) int {
-	return cmpString(a.ID, b.ID)
+	return cmpString(a.Vulnerability.Id, b.Vulnerability.Id)
 }
 
 func cmpGenericFindings(a, b *inventory.GenericFinding) int {
@@ -441,6 +518,27 @@ func cmpGenericFindings(a, b *inventory.GenericFinding) int {
 		return cmpString(a.Adv.ID.Reference, b.Adv.ID.Reference)
 	}
 	return cmpString(a.Target.Extra, b.Target.Extra)
+}
+
+func cmpLocation(a, b extractor.PackageLocation) int {
+	res := cmp.Compare(a.Descriptor.PathOrEmpty(), b.Descriptor.PathOrEmpty())
+	if res != 0 {
+		return res
+	}
+
+	res = cmp.Compare(len(a.Related), len(b.Related))
+	if res != 0 {
+		return res
+	}
+
+	l := len(a.Related)
+	aloc := make([]string, l)
+	bloc := make([]string, l)
+	for i := range l {
+		aloc[i] = a.Related[i].PathOrEmpty()
+		bloc[i] = b.Related[i].PathOrEmpty()
+	}
+	return cmpString(strings.Join(aloc, ","), strings.Join(bloc, ","))
 }
 
 func cmpString(a, b string) int {
