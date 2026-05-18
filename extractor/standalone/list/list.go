@@ -21,7 +21,6 @@ import (
 	"slices"
 
 	"github.com/google/osv-scalibr/extractor/standalone"
-	"github.com/google/osv-scalibr/extractor/standalone/containers/containerd"
 	"github.com/google/osv-scalibr/extractor/standalone/containers/docker"
 	"github.com/google/osv-scalibr/extractor/standalone/os/netports"
 	"github.com/google/osv-scalibr/extractor/standalone/windows/dismpatch"
@@ -40,25 +39,24 @@ type InitMap map[string][]InitFn
 
 var (
 	// Windows standalone extractors.
-	Windows = InitMap{dismpatch.Name: {noCFG(dismpatch.New)}}
+	Windows = InitMap{dismpatch.Name: {dismpatch.New}}
 
 	// WindowsExperimental defines experimental extractors. Note that experimental does not mean
 	// dangerous.
 	WindowsExperimental = InitMap{
-		ospackages.Name:    {noCFG(ospackages.NewDefault)},
-		regosversion.Name:  {noCFG(regosversion.NewDefault)},
-		regpatchlevel.Name: {noCFG(regpatchlevel.NewDefault)},
+		ospackages.Name:    {ospackages.New},
+		regosversion.Name:  {regosversion.New},
+		regpatchlevel.Name: {regpatchlevel.New},
 	}
 
 	// OSExperimental defines experimental OS extractors.
 	OSExperimental = InitMap{
-		netports.Name: {noCFG(netports.New)},
+		netports.Name: {netports.New},
 	}
 
 	// Containers standalone extractors.
 	Containers = InitMap{
-		containerd.Name: {noCFG(containerd.NewDefault)},
-		docker.Name:     {noCFG(docker.New)},
+		docker.Name: {docker.New},
 	}
 
 	// Default standalone extractors.
@@ -91,12 +89,6 @@ func vals(initMap InitMap) []InitFn {
 	return slices.Concat(slices.Collect(maps.Values(initMap))...)
 }
 
-// Wraps initer functions that don't take any config value to initer functions that do.
-// TODO(b/400910349): Remove once all plugins take config values.
-func noCFG(f func() standalone.Extractor) InitFn {
-	return func(_ *cpb.PluginConfig) (standalone.Extractor, error) { return f(), nil }
-}
-
 // ExtractorsFromName returns a list of extractors from a name.
 func ExtractorsFromName(name string, cfg *cpb.PluginConfig) ([]standalone.Extractor, error) {
 	if initers, ok := extractorNames[name]; ok {
@@ -111,4 +103,24 @@ func ExtractorsFromName(name string, cfg *cpb.PluginConfig) ([]standalone.Extrac
 		return result, nil
 	}
 	return nil, fmt.Errorf("unknown extractor %q", name)
+}
+
+// RegisterExtractor dynamically adds an extractor to the SCALIBR registries.
+func RegisterExtractor(name string, initFn InitFn, categories []string) {
+	All = concat(All, InitMap{name: {initFn}})
+
+	// Update the extractorNames map directly for the new extractor and standard groups.
+	extractorNames = concat(extractorNames, InitMap{name: {initFn}})
+	extractorNames["all"] = append(extractorNames["all"], initFn)
+	extractorNames["extractors/all"] = append(extractorNames["extractors/all"], initFn)
+
+	// Dynamically append to requested category lists if they exist.
+	for _, cat := range categories {
+		if list, ok := extractorNames[cat]; ok {
+			extractorNames[cat] = append(list, initFn)
+		}
+		if list, ok := extractorNames["extractors/"+cat]; ok {
+			extractorNames["extractors/"+cat] = append(list, initFn)
+		}
+	}
 }

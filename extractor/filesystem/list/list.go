@@ -21,7 +21,6 @@ import (
 	"slices"
 
 	"github.com/google/osv-scalibr/extractor/filesystem"
-	"github.com/google/osv-scalibr/extractor/filesystem/containers/containerd"
 	"github.com/google/osv-scalibr/extractor/filesystem/containers/dockerbaseimage"
 	"github.com/google/osv-scalibr/extractor/filesystem/containers/dockercomposeimage"
 	"github.com/google/osv-scalibr/extractor/filesystem/containers/k8simage"
@@ -40,8 +39,11 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/nugetcpm"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packagesconfig"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/packageslockjson"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/paketdependencies"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/dotnet/paketlock"
 	elixir "github.com/google/osv-scalibr/extractor/filesystem/language/elixir/mixlock"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/erlang/mixlock"
+	"github.com/google/osv-scalibr/extractor/filesystem/language/gleam/gleamtoml"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/golang/gobinary"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/golang/gomod"
 	"github.com/google/osv-scalibr/extractor/filesystem/language/haskell/cabal"
@@ -83,10 +85,12 @@ import (
 	"github.com/google/osv-scalibr/extractor/filesystem/language/swift/podfilelock"
 	"github.com/google/osv-scalibr/extractor/filesystem/misc/bazelmaven"
 	chromeextensions "github.com/google/osv-scalibr/extractor/filesystem/misc/chrome/extensions"
+	"github.com/google/osv-scalibr/extractor/filesystem/misc/githubactions"
 	"github.com/google/osv-scalibr/extractor/filesystem/misc/netscaler"
 	"github.com/google/osv-scalibr/extractor/filesystem/misc/vscodeextensions"
 	wordpressplugins "github.com/google/osv-scalibr/extractor/filesystem/misc/wordpress/plugins"
 	"github.com/google/osv-scalibr/extractor/filesystem/os/apk"
+	"github.com/google/osv-scalibr/extractor/filesystem/os/chisel"
 	"github.com/google/osv-scalibr/extractor/filesystem/os/chocolatey"
 	"github.com/google/osv-scalibr/extractor/filesystem/os/cos"
 	"github.com/google/osv-scalibr/extractor/filesystem/os/dpkg"
@@ -145,6 +149,7 @@ import (
 	"github.com/google/osv-scalibr/veles/secrets/hashicorpvault"
 	"github.com/google/osv-scalibr/veles/secrets/hcp"
 	"github.com/google/osv-scalibr/veles/secrets/herokuplatformkey"
+	"github.com/google/osv-scalibr/veles/secrets/http"
 	"github.com/google/osv-scalibr/veles/secrets/huggingfaceapikey"
 	"github.com/google/osv-scalibr/veles/secrets/jwt"
 	"github.com/google/osv-scalibr/veles/secrets/mistralapikey"
@@ -244,6 +249,8 @@ var (
 	DartSource = InitMap{pubspec.Name: {pubspec.New}}
 	// ErlangSource extractors for Erlang.
 	ErlangSource = InitMap{mixlock.Name: {mixlock.New}}
+	// GleamSource extractors for Gleam.
+	GleamSource = InitMap{gleamtoml.Name: {gleamtoml.New}}
 	// NimSource extractors for Nim.
 	NimSource = InitMap{nimble.Name: {nimble.New}}
 	// LuaSource extractors for Lua.
@@ -291,11 +298,13 @@ var (
 	}
 	// DotnetSource extractors for Dotnet (.NET).
 	DotnetSource = InitMap{
-		depsjson.Name:         {depsjson.New},
-		csproj.Name:           {csproj.New},
-		nugetcpm.Name:         {nugetcpm.New},
-		packagesconfig.Name:   {packagesconfig.New},
-		packageslockjson.Name: {packageslockjson.New},
+		csproj.Name:            {csproj.New},
+		depsjson.Name:          {depsjson.New},
+		nugetcpm.Name:          {nugetcpm.New},
+		packagesconfig.Name:    {packagesconfig.New},
+		packageslockjson.Name:  {packageslockjson.New},
+		paketdependencies.Name: {paketdependencies.New},
+		paketlock.Name:         {paketlock.New},
 	}
 	// DotnetArtifact extractors for Dotnet (.NET).
 	DotnetArtifact = InitMap{
@@ -311,7 +320,6 @@ var (
 
 	// Containers extractors.
 	Containers = InitMap{
-		containerd.Name:         {containerd.New},
 		k8simage.Name:           {k8simage.New},
 		podman.Name:             {podman.New},
 		dockerbaseimage.Name:    {dockerbaseimage.New},
@@ -337,6 +345,7 @@ var (
 		macports.Name:   {macports.New},
 		winget.Name:     {winget.New},
 		chocolatey.Name: {chocolatey.New},
+		chisel.Name:     {chisel.New},
 	}
 
 	// SecretExtractors for Extractor interface.
@@ -433,6 +442,7 @@ var (
 		{salesforceoauth2jwt.NewDetector(), "secrets/salesforceoauth2jwt", 0},
 		{salesforceoauth2refresh.NewDetector(), "secrets/salesforceoauth2refresh", 0},
 		{discordbottoken.NewDetector(), "secrets/discordbottoken", 0},
+		{http.NewBasicAuthDetector(), "secrets/httpbasicauth", 0},
 	})
 
 	// Secrets contains both secret extractors and detectors.
@@ -451,10 +461,11 @@ var (
 
 	// MiscSource extractors for miscellaneous purposes.
 	MiscSource = InitMap{
-		asdf.Name:        {asdf.New},
-		mise.Name:        {mise.New},
-		nvm.Name:         {nvm.New},
-		nodeversion.Name: {nodeversion.New},
+		asdf.Name:          {asdf.New},
+		githubactions.Name: {githubactions.New},
+		mise.Name:          {mise.New},
+		nvm.Name:           {nvm.New},
+		nodeversion.Name:   {nodeversion.New},
 	}
 
 	// EmbeddedFS extractors.
@@ -485,6 +496,7 @@ var (
 		DartSource,
 		ErlangSource,
 		ElixirSource,
+		GleamSource,
 		HaskellSource,
 		PHPSource,
 		RSource,
@@ -544,6 +556,7 @@ var (
 		"go":         vals(concat(GoSource, GoArtifact)),
 		"dart":       vals(DartSource),
 		"erlang":     vals(ErlangSource),
+		"gleam":      vals(GleamSource),
 		"lua":        vals(LuaSource),
 		"nim":        vals(NimSource),
 		"ocaml":      vals(OcamlSource),
@@ -619,4 +632,24 @@ func initMapFromVelesPlugins(plugins []velesPlugin) InitMap {
 		result[p.name] = []InitFn{convert.FromVelesDetector(p.detector, p.name, p.version)}
 	}
 	return result
+}
+
+// RegisterExtractor dynamically adds an extractor to the SCALIBR registries.
+func RegisterExtractor(name string, initFn InitFn, categories []string) {
+	All = concat(All, InitMap{name: {initFn}})
+
+	// Update the extractorNames map directly for the new extractor and standard groups.
+	extractorNames = concat(extractorNames, InitMap{name: {initFn}})
+	extractorNames["all"] = append(extractorNames["all"], initFn)
+	extractorNames["extractors/all"] = append(extractorNames["extractors/all"], initFn)
+
+	// Dynamically append to requested category lists if they exist.
+	for _, cat := range categories {
+		if list, ok := extractorNames[cat]; ok {
+			extractorNames[cat] = append(list, initFn)
+		}
+		if list, ok := extractorNames["extractors/"+cat]; ok {
+			extractorNames["extractors/"+cat] = append(list, initFn)
+		}
+	}
 }

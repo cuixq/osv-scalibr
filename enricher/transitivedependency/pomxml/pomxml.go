@@ -123,6 +123,9 @@ func New(cfg *cpb.PluginConfig) (enricher.Enricher, error) {
 // Enrich enriches the inventory in pom.xml files with transitive dependencies.
 func (e Enricher) Enrich(ctx context.Context, input *enricher.ScanInput, inv *inventory.Inventory) error {
 	pkgGroups := internal.GroupPackagesFromPlugin(inv.Packages, pomxml.Name)
+	if len(pkgGroups) > 0 {
+		log.Warn("Warning: enricher transitivedependency/pomxml may be risky when run on untrusted artifacts. Please ensure you trust the source code and artifacts.")
+	}
 
 	var errs error
 	for path, pkgMap := range pkgGroups {
@@ -225,9 +228,15 @@ func (e Enricher) extract(ctx context.Context, input *filesystem.ScanInput) (inv
 			VersionType: resolve.Concrete,
 			Version:     string(project.Version),
 		}}
-	reqs := make([]resolve.RequirementVersion, len(project.Dependencies)+len(project.DependencyManagement.Dependencies))
-	for i, d := range project.Dependencies {
-		reqs[i] = resolve.RequirementVersion{
+	reqs := make([]resolve.RequirementVersion, 0, len(project.Dependencies)+len(project.DependencyManagement.Dependencies))
+	for _, d := range project.Dependencies {
+		// Skip dependencies with non-jar types (e.g. zip, pom, aar).
+		// These are typically non-standard artifacts (like MuleSoft RAML specs)
+		// that don't have resolvable POM files in standard Maven registries.
+		if d.Type != "" && d.Type != "jar" {
+			continue
+		}
+		reqs = append(reqs, resolve.RequirementVersion{
 			VersionKey: resolve.VersionKey{
 				PackageKey: resolve.PackageKey{
 					System: resolve.Maven,
@@ -237,10 +246,15 @@ func (e Enricher) extract(ctx context.Context, input *filesystem.ScanInput) (inv
 				Version:     string(d.Version),
 			},
 			Type: resolve.MavenDepType(d, ""),
-		}
+		})
 	}
-	for i, d := range project.DependencyManagement.Dependencies {
-		reqs[len(project.Dependencies)+i] = resolve.RequirementVersion{
+	for _, d := range project.DependencyManagement.Dependencies {
+		// Skip dependency management entries with non-jar types,
+		// except for "pom" type with "import" scope (BOM imports).
+		if d.Type != "" && d.Type != "jar" && !(d.Type == "pom" && d.Scope == "import") {
+			continue
+		}
+		reqs = append(reqs, resolve.RequirementVersion{
 			VersionKey: resolve.VersionKey{
 				PackageKey: resolve.PackageKey{
 					System: resolve.Maven,
@@ -250,7 +264,7 @@ func (e Enricher) extract(ctx context.Context, input *filesystem.ScanInput) (inv
 				Version:     string(d.Version),
 			},
 			Type: resolve.MavenDepType(d, mavenutil.OriginManagement),
-		}
+		})
 	}
 	overrideClient.AddVersion(root, reqs)
 
